@@ -620,8 +620,15 @@ fn resolve_file_system_special_path(
             }
         }
         FileSystemSpecialPath::SlashTmp => {
-            #[allow(clippy::expect_used)]
-            let slash_tmp = AbsolutePathBuf::from_absolute_path("/tmp").expect("/tmp is absolute");
+            // Note: from_absolute_path can fail in edge cases (e.g., EMFILE, sandboxed
+            // environments) even for "/tmp", so we handle the error gracefully.
+            let slash_tmp = match AbsolutePathBuf::from_absolute_path("/tmp") {
+                Ok(path) => path,
+                Err(e) => {
+                    tracing::warn!("Failed to resolve /tmp as absolute path: {e}");
+                    return None;
+                }
+            };
             if !slash_tmp.as_path().is_dir() {
                 return None;
             }
