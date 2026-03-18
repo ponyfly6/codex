@@ -93,7 +93,7 @@ fn default_proxy_url() -> String {
 }
 
 fn default_socks_url() -> String {
-    "http://127.0.0.1:8081".to_string()
+    "http://127.0.0.1:1080".to_string()
 }
 
 /// Clamp non-loopback bind addresses to loopback unless explicitly allowed.
