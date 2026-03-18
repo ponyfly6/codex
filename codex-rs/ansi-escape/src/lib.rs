@@ -14,7 +14,7 @@ fn expand_tabs(s: &str) -> std::borrow::Cow<'_, str> {
         // We do not try to align to tab stops since most usages (like `nl`)
         // look acceptable with a fixed substitution and this avoids stateful math
         // across spans.
-        std::borrow::Cow::Owned(s.replace('\t', "    "))
+        std::borrow::Cow::Owned(s.replace('\t', "  "))
     } else {
         std::borrow::Cow::Borrowed(s)
     }
