@@ -1,8 +1,97 @@
 use super::JobOutcome;
 use super::JobResult;
 use super::aggregate_stats;
+use super::job::serialize_filtered_rollout_response_items;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputBody;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::TokenUsage;
 use pretty_assertions::assert_eq;
+
+#[test]
+fn serializes_memory_rollout_with_agents_removed_but_environment_kept() {
+    let mixed_contextual_message = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![
+            ContentItem::InputText {
+                text: "# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>\nbody\n</INSTRUCTIONS>"
+                    .to_string(),
+            },
+            ContentItem::InputText {
+                text: "<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>".to_string(),
+            },
+        ],
+        end_turn: None,
+        phase: None,
+    };
+    let skill_message = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "<skill>\n<name>demo</name>\n<path>skills/demo/SKILL.md</path>\nbody\n</skill>"
+                .to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    };
+    let subagent_message = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "<subagent_notification>{\"agent_id\":\"a\",\"status\":\"completed\"}</subagent_notification>"
+                .to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    };
+
+    let serialized = serialize_filtered_rollout_response_items(&[
+        RolloutItem::ResponseItem(mixed_contextual_message),
+        RolloutItem::ResponseItem(skill_message),
+        RolloutItem::ResponseItem(subagent_message.clone()),
+    ])
+    .expect("serialize");
+    let parsed: Vec<ResponseItem> = serde_json::from_str(&serialized).expect("parse");
+
+    assert_eq!(
+        parsed,
+        vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>"
+                        .to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            subagent_message,
+        ]
+    );
+}
+
+#[test]
+fn serializes_memory_rollout_redacts_secrets_before_prompt_upload() {
+    let serialized = serialize_filtered_rollout_response_items(&[RolloutItem::ResponseItem(
+        ResponseItem::FunctionCallOutput {
+            call_id: "call_123".to_string(),
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::Text(
+                    r#"{"token":"sk-abcdefghijklmnopqrstuvwxyz123456"}"#.to_string(),
+                ),
+                success: Some(true),
+            },
+        },
+    )])
+    .expect("serialize");
+
+    assert!(!serialized.contains("sk-abcdefghijklmnopqrstuvwxyz123456"));
+    assert!(serialized.contains("[REDACTED_SECRET]"));
+}
 
 #[test]
 fn count_outcomes_sums_token_usage_across_all_jobs() {

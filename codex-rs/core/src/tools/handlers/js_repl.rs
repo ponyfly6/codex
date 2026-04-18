@@ -1,14 +1,9 @@
-use async_trait::async_trait;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::exec::ExecToolCallOutput;
-use crate::exec::StreamOutput;
-use crate::features::Feature;
 use crate::function_tool::FunctionCallError;
-use crate::protocol::ExecCommandSource;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -21,7 +16,11 @@ use crate::tools::js_repl::JS_REPL_PRAGMA_PREFIX;
 use crate::tools::js_repl::JsReplArgs;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use codex_features::Feature;
+use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::protocol::ExecCommandSource;
 
 pub struct JsReplHandler;
 pub struct JsReplResetHandler;
@@ -55,23 +54,23 @@ fn build_js_repl_exec_output(
 }
 
 async fn emit_js_repl_exec_begin(
-    session: &crate::codex::Session,
-    turn: &crate::codex::TurnContext,
+    session: &crate::session::session::Session,
+    turn: &crate::session::turn_context::TurnContext,
     call_id: &str,
 ) {
     let emitter = ToolEmitter::shell(
         vec!["js_repl".to_string()],
         turn.cwd.clone(),
         ExecCommandSource::Agent,
-        false,
+        /*freeform*/ false,
     );
-    let ctx = ToolEventCtx::new(session, turn, call_id, None);
+    let ctx = ToolEventCtx::new(session, turn, call_id, /*turn_diff_tracker*/ None);
     emitter.emit(ctx, ToolEventStage::Begin).await;
 }
 
 async fn emit_js_repl_exec_end(
-    session: &crate::codex::Session,
-    turn: &crate::codex::TurnContext,
+    session: &crate::session::session::Session,
+    turn: &crate::session::turn_context::TurnContext,
     call_id: &str,
     output: &str,
     error: Option<&str>,
@@ -82,9 +81,9 @@ async fn emit_js_repl_exec_end(
         vec!["js_repl".to_string()],
         turn.cwd.clone(),
         ExecCommandSource::Agent,
-        false,
+        /*freeform*/ false,
     );
-    let ctx = ToolEventCtx::new(session, turn, call_id, None);
+    let ctx = ToolEventCtx::new(session, turn, call_id, /*turn_diff_tracker*/ None);
     let stage = if error.is_some() {
         ToolEventStage::Failure(ToolEventFailure::Output(exec_output))
     } else {
@@ -92,7 +91,6 @@ async fn emit_js_repl_exec_end(
     };
     emitter.emit(ctx, stage).await;
 }
-#[async_trait]
 impl ToolHandler for JsReplHandler {
     type Output = FunctionToolOutput;
 
@@ -169,7 +167,7 @@ impl ToolHandler for JsReplHandler {
             turn.as_ref(),
             &call_id,
             &content,
-            None,
+            /*error*/ None,
             started_at.elapsed(),
         )
         .await;
@@ -182,7 +180,6 @@ impl ToolHandler for JsReplHandler {
     }
 }
 
-#[async_trait]
 impl ToolHandler for JsReplResetHandler {
     type Output = FunctionToolOutput;
 

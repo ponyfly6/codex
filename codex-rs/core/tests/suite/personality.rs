@@ -1,7 +1,7 @@
-use codex_core::config::types::Personality;
-use codex_core::features::Feature;
-use codex_core::models_manager::manager::ModelsManager;
-use codex_core::models_manager::manager::RefreshStrategy;
+use codex_config::types::Personality;
+use codex_features::Feature;
+use codex_models_manager::manager::ModelsManager;
+use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
@@ -103,6 +103,7 @@ async fn user_turn_personality_none_does_not_add_update_message() -> anyhow::Res
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -153,6 +154,7 @@ async fn config_personality_some_sets_instructions_template() -> anyhow::Result<
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -210,6 +212,7 @@ async fn config_personality_none_sends_no_personality() -> anyhow::Result<()> {
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -273,6 +276,7 @@ async fn default_personality_is_pragmatic_without_config_toml() -> anyhow::Resul
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -324,6 +328,7 @@ async fn user_turn_personality_some_adds_update_message() -> anyhow::Result<()> 
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -361,6 +366,7 @@ async fn user_turn_personality_some_adds_update_message() -> anyhow::Result<()> 
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -427,6 +433,7 @@ async fn user_turn_personality_same_value_does_not_add_update_message() -> anyho
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -464,6 +471,7 @@ async fn user_turn_personality_same_value_does_not_add_update_message() -> anyho
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -543,6 +551,7 @@ async fn user_turn_personality_skips_if_feature_disabled() -> anyhow::Result<()>
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -580,6 +589,7 @@ async fn user_turn_personality_skips_if_feature_disabled() -> anyhow::Result<()>
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: test.config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
@@ -634,6 +644,7 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
+        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: Some(ModelMessages {
@@ -651,15 +662,15 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
         availability_nux: None,
         apply_patch_tool_type: None,
         web_search_tool_type: Default::default(),
-        truncation_policy: TruncationPolicyConfig::bytes(10_000),
+        truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_parallel_tool_calls: false,
         supports_image_detail_original: false,
         context_window: Some(128_000),
+        max_context_window: None,
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
-        prefer_websockets: false,
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     };
@@ -675,7 +686,7 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
     let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
 
     let mut builder = test_codex()
-        .with_auth(codex_core::CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_auth(codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
             config
                 .features
@@ -697,6 +708,7 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: remote_slug.to_string(),
             effort: test.config.model_reasoning_effort,
@@ -750,6 +762,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
+        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: Some(ModelMessages {
@@ -767,15 +780,15 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
         availability_nux: None,
         apply_patch_tool_type: None,
         web_search_tool_type: Default::default(),
-        truncation_policy: TruncationPolicyConfig::bytes(10_000),
+        truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_parallel_tool_calls: false,
         supports_image_detail_original: false,
         context_window: Some(128_000),
+        max_context_window: None,
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
-        prefer_websockets: false,
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     };
@@ -795,7 +808,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
     .await;
 
     let mut builder = test_codex()
-        .with_auth(codex_core::CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_auth(codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
             config
                 .features
@@ -816,6 +829,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: remote_slug.to_string(),
             effort: test.config.model_reasoning_effort,
@@ -853,6 +867,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
             final_output_json_schema: None,
             cwd: test.cwd_path().to_path_buf(),
             approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: remote_slug.to_string(),
             effort: test.config.model_reasoning_effort,

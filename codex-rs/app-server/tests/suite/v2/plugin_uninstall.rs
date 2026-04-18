@@ -11,7 +11,7 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::PluginUninstallParams;
 use codex_app_server_protocol::PluginUninstallResponse;
 use codex_app_server_protocol::RequestId;
-use codex_core::auth::AuthCredentialsStoreMode;
+use codex_config::types::AuthCredentialsStoreMode;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
@@ -107,21 +107,22 @@ async fn plugin_uninstall_tracks_analytics_event() -> Result<()> {
     let response: PluginUninstallResponse = to_response(response)?;
     assert_eq!(response, PluginUninstallResponse {});
 
-    let payloads = timeout(DEFAULT_TIMEOUT, async {
+    let payload = timeout(DEFAULT_TIMEOUT, async {
         loop {
             let Some(requests) = analytics_server.received_requests().await else {
                 tokio::time::sleep(Duration::from_millis(25)).await;
                 continue;
             };
-            if !requests.is_empty() {
-                break requests;
+            if let Some(request) = requests.iter().find(|request| {
+                request.method == "POST" && request.url.path() == "/codex/analytics-events/events"
+            }) {
+                break request.body.clone();
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
     .await?;
-    let payload: serde_json::Value =
-        serde_json::from_slice(&payloads[0].body).expect("analytics payload");
+    let payload: serde_json::Value = serde_json::from_slice(&payload).expect("analytics payload");
     assert_eq!(
         payload,
         json!({

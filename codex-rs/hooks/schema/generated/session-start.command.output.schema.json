@@ -4,7 +4,11 @@
   "definitions": {
     "HookEventNameWire": {
       "enum": [
+        "PreToolUse",
+        "PermissionRequest",
+        "PostToolUse",
         "SessionStart",
+        "UserPromptSubmit",
         "Stop"
       ],
       "type": "string"

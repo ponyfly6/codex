@@ -1,11 +1,9 @@
-use crate::client_common::tools::ToolSearchOutputTool;
-use crate::codex::Session;
-use crate::codex::TurnContext;
+use crate::original_image_detail::sanitize_original_image_detail;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::tools::TELEMETRY_PREVIEW_MAX_BYTES;
 use crate::tools::TELEMETRY_PREVIEW_MAX_LINES;
 use crate::tools::TELEMETRY_PREVIEW_TRUNCATION_NOTICE;
-use crate::truncate::TruncationPolicy;
-use crate::truncate::formatted_truncate_text;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::resolve_max_tokens;
 use codex_protocol::mcp::CallToolResult;
@@ -16,6 +14,10 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::SearchToolCallParams;
 use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::models::function_call_output_content_items_to_text;
+use codex_tools::ToolName;
+use codex_tools::ToolSearchOutputTool;
+use codex_utils_output_truncation::TruncationPolicy;
+use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_string::take_bytes_at_char_boundary;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -39,8 +41,7 @@ pub struct ToolInvocation {
     pub turn: Arc<TurnContext>,
     pub tracker: SharedTurnDiffTracker,
     pub call_id: String,
-    pub tool_name: String,
-    pub tool_namespace: Option<String>,
+    pub tool_name: ToolName,
     pub payload: ToolPayload,
 }
 
@@ -84,6 +85,10 @@ pub trait ToolOutput: Send {
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem;
 
+    fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<JsonValue> {
+        None
+    }
+
     fn code_mode_result(&self, payload: &ToolPayload) -> JsonValue {
         response_input_to_code_mode_result(self.to_response_item("", payload))
     }
@@ -111,6 +116,68 @@ impl ToolOutput for CallToolResult {
         serde_json::to_value(self).unwrap_or_else(|err| {
             JsonValue::String(format!("failed to serialize mcp result: {err}"))
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct McpToolOutput {
+    pub result: CallToolResult,
+    pub wall_time: Duration,
+    pub original_image_detail_supported: bool,
+}
+
+impl ToolOutput for McpToolOutput {
+    fn log_preview(&self) -> String {
+        let payload = self.response_payload();
+        let preview = payload.body.to_text().unwrap_or_else(|| {
+            serde_json::to_string(&self.result.content)
+                .unwrap_or_else(|err| format!("failed to serialize mcp result: {err}"))
+        });
+        telemetry_preview(&preview)
+    }
+
+    fn success_for_logging(&self) -> bool {
+        self.result.success()
+    }
+
+    fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
+        ResponseInputItem::FunctionCallOutput {
+            call_id: call_id.to_string(),
+            output: self.response_payload(),
+        }
+    }
+
+    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        serde_json::to_value(&self.result).unwrap_or_else(|err| {
+            JsonValue::String(format!("failed to serialize mcp result: {err}"))
+        })
+    }
+}
+
+impl McpToolOutput {
+    fn response_payload(&self) -> FunctionCallOutputPayload {
+        let mut payload = self.result.as_function_call_output_payload();
+        if let Some(items) = payload.content_items_mut() {
+            sanitize_original_image_detail(self.original_image_detail_supported, items);
+        }
+
+        let wall_time_seconds = self.wall_time.as_secs_f64();
+        let header = format!("Wall time: {wall_time_seconds:.4} seconds\nOutput:");
+
+        match &mut payload.body {
+            FunctionCallOutputBody::Text(text) => {
+                if text.is_empty() {
+                    *text = header;
+                } else {
+                    *text = format!("{header}\n{text}");
+                }
+            }
+            FunctionCallOutputBody::ContentItems(items) => {
+                items.insert(0, FunctionCallOutputContentItem::InputText { text: header });
+            }
+        }
+
+        payload
     }
 }
 
@@ -158,6 +225,7 @@ impl ToolOutput for ToolSearchOutput {
 pub struct FunctionToolOutput {
     pub body: Vec<FunctionCallOutputContentItem>,
     pub success: Option<bool>,
+    pub post_tool_use_response: Option<JsonValue>,
 }
 
 impl FunctionToolOutput {
@@ -165,6 +233,7 @@ impl FunctionToolOutput {
         Self {
             body: vec![FunctionCallOutputContentItem::InputText { text }],
             success,
+            post_tool_use_response: None,
         }
     }
 
@@ -175,6 +244,7 @@ impl FunctionToolOutput {
         Self {
             body: content,
             success,
+            post_tool_use_response: None,
         }
     }
 
@@ -196,6 +266,45 @@ impl ToolOutput for FunctionToolOutput {
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
         function_tool_response(call_id, payload, self.body.clone(), self.success)
+    }
+
+    fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<JsonValue> {
+        self.post_tool_use_response.clone()
+    }
+}
+
+pub struct ApplyPatchToolOutput {
+    pub text: String,
+}
+
+impl ApplyPatchToolOutput {
+    pub fn from_text(text: String) -> Self {
+        Self { text }
+    }
+}
+
+impl ToolOutput for ApplyPatchToolOutput {
+    fn log_preview(&self) -> String {
+        telemetry_preview(&self.text)
+    }
+
+    fn success_for_logging(&self) -> bool {
+        true
+    }
+
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        function_tool_response(
+            call_id,
+            payload,
+            vec![FunctionCallOutputContentItem::InputText {
+                text: self.text.clone(),
+            }],
+            Some(true),
+        )
+    }
+
+    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        JsonValue::Object(serde_json::Map::new())
     }
 }
 
@@ -230,7 +339,7 @@ impl ToolOutput for AbortedToolOutput {
                 vec![FunctionCallOutputContentItem::InputText {
                     text: self.message.clone(),
                 }],
-                None,
+                /*success*/ None,
             ),
         }
     }
@@ -268,6 +377,14 @@ impl ToolOutput for ExecCommandToolOutput {
             }],
             Some(true),
         )
+    }
+
+    fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<JsonValue> {
+        if self.process_id.is_some() || self.session_command.is_none() {
+            return None;
+        }
+
+        Some(JsonValue::String(self.truncated_output()))
     }
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
@@ -309,13 +426,6 @@ impl ExecCommandToolOutput {
 
     fn response_text(&self) -> String {
         let mut sections = Vec::new();
-
-        if let Some(command) = &self.session_command {
-            sections.push(format!(
-                "Command: {}",
-                codex_shell_command::parse_command::shlex_join(command)
-            ));
-        }
 
         if !self.chunk_id.is_empty() {
             sections.push(format!("Chunk ID: {}", self.chunk_id));
@@ -417,6 +527,7 @@ fn function_tool_response(
     if matches!(payload, ToolPayload::Custom { .. }) {
         return ResponseInputItem::CustomToolCallOutput {
             call_id: call_id.to_string(),
+            name: None,
             output: FunctionCallOutputPayload { body, success },
         };
     }
